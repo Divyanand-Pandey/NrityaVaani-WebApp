@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 import torch
 import torch.nn as nn
@@ -47,7 +47,7 @@ try:
             
     if gemini_api_key:
         genai.configure(api_key=gemini_api_key)
-        gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        gemini_model = genai.GenerativeModel('gemini-1.5-pro')
     else:
         print("Warning: Neither GEMINI_API_KEY environment variable nor api.bin were found. Gemini Voice features will be disabled.")
 except FileNotFoundError:
@@ -107,7 +107,7 @@ def load_hand_landmarker():
 hand_landmarker = load_hand_landmarker()
 
 @app.post("/predict")
-async def predict_mudra(file: UploadFile = File(...)):
+async def predict_mudra(file: UploadFile = File(...), target_mudra: str = Form(None)):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image type")
 
@@ -181,20 +181,60 @@ async def predict_mudra(file: UploadFile = File(...)):
         predicted_mudra = classes[idx]
         confidence_pct = confidence * 100
         
+        # Fallback descriptions in case Gemini API fails
+        fallback_descriptions = {
+            "Alapadma": "यह अलपद्म मुद्रा है, जो पूर्ण खिले हुए कमल का प्रतीक है।",
+            "Ardhapataka": "यह अर्धपताका मुद्रा है, जो आधा झंडा, पत्तियां या चाकू को दर्शाती है।",
+            "Chandrakala": "यह चंद्रकला मुद्रा है, जो अर्धचंद्र या आभूषण को दर्शाती है।",
+            "Kartarimukha": "यह कर्तरीमुख मुद्रा है, जो कैंची के समान अलगाव या विरोध दर्शाती है।",
+            "Mayura": "यह मयूर मुद्रा है, जो मोर या सुंदरता का प्रतीक है।",
+            "Pataka": "यह पताका मुद्रा है, जिसका अर्थ झंडा है। इसका उपयोग बादल या जंगल को दर्शाने में होता है।",
+            "Shikhara": "यह शिखर मुद्रा है, जो धनुष या दृढ़ निश्चय का प्रतीक है।",
+            "Simhamukha": "यह सिंहमुख मुद्रा है, जो शेर के चेहरे या साहस को दर्शाती है।",
+            "Suchi": "यह सूची मुद्रा है, जिसका उपयोग सुई या किसी चीज़ को इंगित करने के लिए होता है।",
+            "Tripataka": "यह त्रिपताका मुद्रा है, जो मुकुट, पेड़ या तीर को दर्शाने के लिए उपयोग की जाती है।"
+        }
+        fallback_desc = fallback_descriptions.get(predicted_mudra, f"यह {predicted_mudra} मुद्रा है।")
+        
         gemini_message = ""
         audio_url = None
         
         # Determine success threshold
         if confidence_pct >= 70:
+            # Check if practice target was set and missed
+            if target_mudra and target_mudra != predicted_mudra:
+                if gemini_model:
+                    try:
+                        prompt = f"The student wanted to form the '{target_mudra}' mudra but formed '{predicted_mudra}' instead. Act as an expert Bharatanatyam teacher. Gently correct them in Hindi, telling them what they actually formed, and clearly instruct how to position their fingers to correctly achieve the intended '{target_mudra}'."
+                        response = gemini_model.generate_content(prompt)
+                        gemini_message = response.text.replace("\n", " ").strip()
+                        audio_url = text_to_speech_base64(gemini_message)
+                    except Exception as e:
+                        print(f"Gemini error: {e}")
+                        gemini_message = f"आपने {predicted_mudra} बनाया है। कृपया {target_mudra} का अभ्यास करें।"
+                        audio_url = text_to_speech_base64(gemini_message)
+
+                return {
+                    "success": False,
+                    "error": "wrong_mudra",
+                    "message": f"You formed {predicted_mudra} instead of {target_mudra}. Listen to the AI teacher's instructions to improve.",
+                    "mudra": target_mudra,
+                    "confidence": round(confidence_pct, 2),
+                    "cropped_image": cropped_b64,
+                    "gemini_message": gemini_message,
+                    "audio_url": audio_url
+                }
+            
+            # Correct mudra or free capture
             if gemini_model:
                 try:
-                    prompt = f"In one short, simple sentence in Hindi, what is the classical meaning or symbolism of the {predicted_mudra} mudra in Bharatanatyam?"
+                    prompt = f"The user flawlessly formed the '{predicted_mudra}' mudra in Bharatanatyam. Describe the physical visual structure of this mudra and explain its classical symbolism in 2 elegant Hindi sentences."
                     response = gemini_model.generate_content(prompt)
                     gemini_message = response.text.replace("\n", " ").strip()
                     audio_url = text_to_speech_base64(gemini_message)
                 except Exception as e:
                     print(f"Gemini error: {e}")
-                    gemini_message = f"यह {predicted_mudra} मुद्रा है।"
+                    gemini_message = fallback_desc
                     audio_url = text_to_speech_base64(gemini_message)
 
             return {
@@ -208,20 +248,21 @@ async def predict_mudra(file: UploadFile = File(...)):
         else:
             if gemini_model:
                 try:
-                    prompt = f"A student is trying to perform the {predicted_mudra} mudra in Bharatanatyam but is struggling. In one short, encouraging sentence in Hindi, tell them exactly how to position their fingers correctly to achieve this mudra."
+                    practice_mudra = target_mudra if target_mudra else predicted_mudra
+                    prompt = f"A student is doing Bharatanatyam and struggling to perform the '{practice_mudra}' mudra. Act as an expert dance teacher. In 2 encouraging Hindi sentences, provide clear, step-by-step physical instructions on exactly how to fold, position, and align their fingers to master this specific mudra."
                     response = gemini_model.generate_content(prompt)
                     gemini_message = response.text.replace("\n", " ").strip()
                     audio_url = text_to_speech_base64(gemini_message)
                 except Exception as e:
                     print(f"Gemini error: {e}")
-                    gemini_message = f"कृपया {predicted_mudra} के लिए अपनी उंगलियों की स्थिति का अभ्यास करें।"
+                    gemini_message = f"कृपया {practice_mudra} के लिए अपनी उंगलियों की स्थिति का अभ्यास करें।"
                     audio_url = text_to_speech_base64(gemini_message)
 
             return {
                 "success": False,
                 "error": "low_confidence",
-                "message": "Low confidence. Please try again with clear hand posture.",
-                "mudra": predicted_mudra,
+                "message": f"Low confidence. Please follow the teacher's instructions to improve your posture for {target_mudra if target_mudra else predicted_mudra}.",
+                "mudra": target_mudra if target_mudra else predicted_mudra,
                 "confidence": round(confidence_pct, 2),
                 "cropped_image": cropped_b64,
                 "gemini_message": gemini_message,

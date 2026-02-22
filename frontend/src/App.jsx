@@ -100,6 +100,9 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', imageBlob, 'capture.jpg');
+    if (targetMudra) {
+      formData.append('target_mudra', targetMudra);
+    }
 
     try {
       const response = await fetch(API_URL, {
