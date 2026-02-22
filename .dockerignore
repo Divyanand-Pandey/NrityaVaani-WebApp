@@ -15,3 +15,4 @@ frontend/dist/
 .DS_Store
 .flaskenv
 .env
+backend/final_dataset/
