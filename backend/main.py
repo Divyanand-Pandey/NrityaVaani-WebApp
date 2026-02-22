@@ -15,6 +15,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import mediapipe as mp
 from gtts import gTTS
+from fastapi.staticfiles import StaticFiles
 
 def text_to_speech_base64(text, lang='hi'):
     """Converts text to speech using gTTS and returns base64 encoded audio"""
@@ -230,10 +231,14 @@ async def predict_mudra(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
-@app.get("/")
-def read_root():
-    return {"message": "NrityaVaani API is running. Use the /predict endpoint for inference."}
-
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+# Mount frontend static files
+if os.path.exists("static"):
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+else:
+    @app.get("/")
+    def read_root():
+        return {"message": "NrityaVaani API is running. Use the /predict endpoint for inference. (Static frontend not found)"}

@@ -7,3 +7,5 @@ pillow
 opencv-python-headless
 numpy
 mediapipe
+gtts
+google-generativeai

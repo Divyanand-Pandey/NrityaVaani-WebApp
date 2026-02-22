@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, Image as ImageIcon, Upload, RefreshCcw, AlertTriangle } from 'lucide-react';
 import './App.css';
 
-const API_URL = 'http://127.0.0.1:8000/predict';
+const API_URL = '/predict';
 
 const MUDRA_INFO = {
   "Alapadma": "Fully bloomed lotus; beauty, purity, fullness.",
